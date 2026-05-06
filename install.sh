@@ -131,6 +131,7 @@ show_help() {
     echo -e "  -l, --local-install             本地获取安装脚本, 使用当前目录"
     echo -e "  -p, --proxy <addr>              使用代理下载, e.g., -p http://127.0.0.1:2333"
     echo -e "  -v, --core-version <ver>        自定义 $is_core_name 版本, e.g., -v v1.8.13"
+    echo -e "  -i, --extra-ips <ip1,ip2,...>    添加额外公网 IP, e.g., -i 14.29.213.12,1.2.3.4"
     echo -e "  -h, --help                      显示此帮助界面\n"
 
     exit 0
@@ -198,36 +199,68 @@ download() {
     }
 }
 
-# get server ip (multiple sources for reliability)
-get_ip() {
-    export "$(_wget -4 -qO- https://one.one.one.one/cdn-cgi/trace 2>/dev/null | grep ip=)" &>/dev/null
-    [[ -z $ip ]] && export "$(_wget -4 -qO- https://ifconfig.me 2>/dev/null | sed 's/^/ip=/')" &>/dev/null
-    [[ -z $ip ]] && export "$(_wget -4 -qO- https://api.ipify.org 2>/dev/null | sed 's/^/ip=/')" &>/dev/null
-    [[ -z $ip ]] && export "$(_wget -4 -qO- https://ipv4.icanhazip.com 2>/dev/null | sed 's/^/ip=/')" &>/dev/null
-    [[ -z $ip ]] && export "$(_wget -6 -qO- https://one.one.one.one/cdn-cgi/trace 2>/dev/null | grep ip=)" &>/dev/null
+# === IP detection (inline, no external file dependency) ===
+
+_add_ip() {
+    local addr=$1
+    [[ -z $addr || $addr == "null" ]] && return
+    [[ $addr =~ ^(10\.|172\.(1[6-9]|2[0-9]|3[0-1])\.|192\.168\.|100\.(6[4-9]|[7-9][0-9]|1[0-1][0-9]|12[0-7])\.|127\.|169\.254\.) ]] && return
+    for existing in "${all_ips[@]}"; do [[ $existing == "$addr" ]] && return; done
+    all_ips+=("$addr")
 }
 
-# detect all public IPs on this server
-get_all_ips() {
+get_ip() {
+    msg warn "获取服务器公网 IP..."
     all_ips=()
-    [[ $ip ]] && all_ips+=($ip)
-    # check interface IPv4 addresses
-    local iface_ips=$(ip -4 addr show scope global 2>/dev/null | grep -oP 'inet \K[\d.]+')
-    for addr in $iface_ips; do
-        [[ $addr =~ ^(10\.|172\.(1[6-9]|2[0-9]|3[0-1])\.|192\.168\.|100\.(6[4-9]|[7-9][0-9]|1[0-1][0-9]|12[0-7])\.) ]] && continue
-        local dup=0
-        for existing in "${all_ips[@]}"; do [[ $existing == $addr ]] && dup=1 && break; done
-        [[ $dup -eq 0 ]] && all_ips+=($addr)
-    done
-    # check interface IPv6 addresses
-    local iface_ipv6=$(ip -6 addr show scope global 2>/dev/null | grep -oP 'inet6 \K[^/]+')
-    for addr in $iface_ipv6; do
+    # 1. local interfaces
+    local addrs=$(ip -4 addr show scope global 2>/dev/null | grep -oP 'inet \K[\d.]+')
+    for addr in $addrs; do _add_ip "$addr"; done
+    # 2. cloud metadata (Huawei/OpenStack, AWS, Tencent, Alibaba)
+    if type -P curl &>/dev/null; then
+        local net_json=$(curl -sLm3 http://169.254.169.254/openstack/latest/network_data.json 2>/dev/null)
+        if [[ $net_json == *"public_ipv4"* ]]; then
+            local meta_ips=$(echo "$net_json" | grep -oP '"public_ipv4"\s*:\s*"\K[^"]+')
+            for addr in $meta_ips; do _add_ip "$addr"; done
+        fi
+        local aws_ip=$(curl -sLm3 http://169.254.169.254/latest/meta-data/public-ipv4 2>/dev/null)
+        [[ $aws_ip =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] && _add_ip "$aws_ip"
+        local tx_ip=$(curl -sLm3 http://metadata.tencentyun.com/latest/meta-data/public-ipv4 2>/dev/null)
+        [[ $tx_ip =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] && _add_ip "$tx_ip"
+        local ali_ip=$(curl -sLm3 http://100.100.100.200/latest/meta-data/eipv4 2>/dev/null)
+        [[ $ali_ip =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] && _add_ip "$ali_ip"
+    fi
+    # set primary ip
+    [[ ${#all_ips[@]} -gt 0 ]] && ip="${all_ips[0]}"
+    # 3. external services via curl
+    if [[ -z $ip ]] && type -P curl &>/dev/null; then
+        ip=$(curl -4 -sLm5 https://one.one.one.one/cdn-cgi/trace 2>/dev/null | grep -oP 'ip=\K.*')
+        [[ -z $ip ]] && ip=$(curl -4 -sLm5 https://ifconfig.me 2>/dev/null)
+        [[ -z $ip ]] && ip=$(curl -4 -sLm5 https://api.ipify.org 2>/dev/null)
+        [[ -z $ip ]] && ip=$(curl -4 -sLm5 http://ip.sb 2>/dev/null)
+        [[ $ip ]] && _add_ip "$ip"
+    fi
+    # 4. external services via wget
+    if [[ -z $ip ]]; then
+        ip=$(wget -T5 -t1 -4 -qO- http://ifconfig.me 2>/dev/null)
+        [[ -z $ip ]] && ip=$(wget -T5 -t1 -4 -qO- http://ip.sb 2>/dev/null)
+        [[ $ip ]] && _add_ip "$ip"
+    fi
+}
+
+get_all_ips() {
+    [[ $ip ]] && _add_ip "$ip"
+    # IPv6
+    local ipv6_addrs=$(ip -6 addr show scope global 2>/dev/null | grep -oP 'inet6 \K[^/]+')
+    for addr in $ipv6_addrs; do
         [[ $addr =~ ^fe80: ]] && continue
-        local dup=0
-        for existing in "${all_ips[@]}"; do [[ $existing == $addr ]] && dup=1 && break; done
-        [[ $dup -eq 0 ]] && all_ips+=($addr)
+        _add_ip "$addr"
     done
-    [[ ${#all_ips[@]} -eq 0 ]] && all_ips=($ip)
+    # extra IPs from -i parameter
+    if [[ $extra_ips ]]; then
+        IFS=',' read -ra ips_arr <<< "$extra_ips"
+        for addr in "${ips_arr[@]}"; do _add_ip "$(echo "$addr" | tr -d ' ')"; done
+    fi
+    [[ ${#all_ips[@]} -eq 0 ]] && all_ips=("$ip")
 }
 
 # batch add a protocol, suppress info display, collect URL
@@ -252,6 +285,22 @@ batch_add() {
     }
 }
 
+# replace IP in a URL, handling vmess:// base64 specially
+_replace_ip_in_url() {
+    local url=$1 old_ip=$2 new_ip=$3
+    if [[ $url == vmess://* ]]; then
+        local b64=${url#vmess://}
+        local json=$(echo "$b64" | base64 -d 2>/dev/null)
+        if [[ $json ]]; then
+            json="${json//$old_ip/$new_ip}"
+            url="vmess://$(echo -n "$json" | base64 -w0 2>/dev/null || echo -n "$json" | base64 2>/dev/null | tr -d '\n')"
+        fi
+    else
+        url="${url//$old_ip/$new_ip}"
+    fi
+    echo "$url"
+}
+
 # show all generated links for all IPs
 show_batch_links() {
     echo
@@ -267,8 +316,8 @@ show_batch_links() {
             if [[ $current_ip != "${all_ips[0]}" ]]; then
                 local primary="${all_ips[0]}"
                 [[ $(grep ":" <<<$primary) ]] && primary_d="[$primary]" || primary_d=$primary
-                url="${url//$primary_d/$display_ip}"
-                url="${url//$primary/$current_ip}"
+                [[ $primary_d != $primary ]] && url=$(_replace_ip_in_url "$url" "$primary_d" "$display_ip")
+                url=$(_replace_ip_in_url "$url" "$primary" "$current_ip")
             fi
             _cyan "${batch_names[$i]}"
             echo -e "\e[4m${url}\e[0m"
@@ -354,6 +403,13 @@ pass_args() {
                 err "($1) 缺少必需参数, 正确使用示例: [$1 v1.8.13]"
             }
             is_core_ver=v${2//v/}
+            shift 2
+            ;;
+        -i | --extra-ips)
+            [[ -z $2 ]] && {
+                err "($1) 缺少必需参数, 正确使用示例: [$1 14.29.213.12,1.2.3.4]"
+            }
+            extra_ips=$2
             shift 2
             ;;
         -h | --help)
