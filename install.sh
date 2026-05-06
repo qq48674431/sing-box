@@ -564,7 +564,13 @@ main() {
     # 5. VLESS-TCP (no TLS)
     batch_add vtcp
 
-    # 6. Shadowsocks (chacha20-ietf-poly1305)
+    # 6. Trojan-TLS (self-signed TLS, second instance)
+    batch_add trojan
+
+    # 7. Hysteria2-TLS (self-signed TLS, second instance)
+    batch_add hy2
+
+    # 8. Shadowsocks (chacha20-ietf-poly1305)
     batch_add ss auto auto chacha20-ietf-poly1305
 
     # 7. SOCKS5
