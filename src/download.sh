@@ -19,6 +19,10 @@ get_latest_version() {
     }
     unset name url
 }
+get_core_version_from_repo() {
+    local asset_name=$(_wget -qO- "https://api.github.com/repos/$is_sh_repo/releases/latest?v=$RANDOM" | grep -oE "sing-box-[0-9.]+-linux-$is_arch" | head -1)
+    [[ $asset_name ]] && echo "v$(echo $asset_name | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')"
+}
 download() {
     latest_ver=$2
     [[ ! $latest_ver ]] && get_latest_version $1
@@ -32,7 +36,9 @@ download() {
     core)
         name=$is_core_name
         tmpfile=$tmpdir/$is_core.tar.gz
-        link="https://github.com/${is_core_repo}/releases/download/${latest_ver}/${is_core}-${latest_ver:1}-linux-${is_arch}.tar.gz"
+        local core_ver=$(get_core_version_from_repo)
+        [[ ! $core_ver ]] && core_ver="v1.13.11"
+        link="https://github.com/${is_sh_repo}/releases/latest/download/${is_core}-${core_ver:1}-linux-${is_arch}.tar.gz"
         download_file
         tar zxf $tmpfile --strip-components 1 -C $is_core_dir/bin
         chmod +x $is_core_bin
