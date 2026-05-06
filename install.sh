@@ -71,7 +71,6 @@ is_log_dir=/var/log/$is_core
 is_sh_bin=/usr/local/bin/$is_core
 is_sh_dir=$is_core_dir/sh
 is_sh_repo=$author/$is_core
-is_local_url="http://124.221.155.16/vps-sing-box"
 is_pkg="wget tar bash"
 # Alpine: gcompat provides glibc compatibility for prebuilt binaries
 [[ $cmd =~ apk ]] && is_pkg="$is_pkg gcompat jq"
@@ -167,60 +166,45 @@ install_pkg() {
     fi
 }
 
-# download file (VPS local first, GitHub fallback)
+# download file
 download() {
-    local local_link="" github_link=""
     case $1 in
     core)
-        [[ ! $is_core_ver ]] && {
-            is_core_ver=$(_wget -qO- "https://api.github.com/repos/${is_core_repo}/releases/latest?v=$RANDOM" 2>/dev/null | grep tag_name | grep -E -o 'v([0-9.]+)')
-            [[ ! $is_core_ver ]] && is_core_ver="v1.13.11"
-        }
-        local_link="${is_local_url}/${is_core}-${is_core_ver:1}-linux-${is_arch}.tar.gz"
-        github_link="https://github.com/${is_core_repo}/releases/download/${is_core_ver}/${is_core}-${is_core_ver:1}-linux-${is_arch}.tar.gz"
+        [[ ! $is_core_ver ]] && is_core_ver=$(_wget -qO- "https://api.github.com/repos/${is_core_repo}/releases/latest?v=$RANDOM" | grep tag_name | grep -E -o 'v([0-9.]+)')
+        [[ ! $is_core_ver ]] && is_core_ver="v1.13.11"
+        [[ $is_core_ver ]] && link="https://github.com/${is_core_repo}/releases/download/${is_core_ver}/${is_core}-${is_core_ver:1}-linux-${is_arch}.tar.gz"
         name=$is_core_name
         tmpfile=$tmpcore
         is_ok=$is_core_ok
         ;;
     sh)
-        local_link="${is_local_url}/code.tar.gz"
-        github_link="https://github.com/${is_sh_repo}/releases/latest/download/code.tar.gz"
+        link=https://github.com/${is_sh_repo}/releases/latest/download/code.tar.gz
         name="$is_core_name 脚本"
         tmpfile=$tmpsh
         is_ok=$is_sh_ok
         ;;
     jq)
-        local_link="${is_local_url}/jq-linux-${is_arch}"
-        github_link="https://github.com/jqlang/jq/releases/download/jq-1.7.1/jq-linux-$is_arch"
+        link=https://github.com/jqlang/jq/releases/download/jq-1.7.1/jq-linux-$is_arch
         name="jq"
         tmpfile=$tmpjq
         is_ok=$is_jq_ok
         ;;
     esac
 
-    # try VPS local source first (fast for China)
-    if [[ $local_link ]]; then
-        msg warn "下载 ${name} > ${local_link}"
-        if _wget -t 2 -T 10 -q -c $local_link -O $tmpfile 2>/dev/null && [[ -s $tmpfile ]]; then
-            mv -f $tmpfile $is_ok
-            return
-        fi
-    fi
-
-    # fallback to GitHub
-    if [[ $github_link ]]; then
-        msg warn "下载 ${name} > ${github_link}"
-        if _wget -t 3 -q -c $github_link -O $tmpfile; then
+    [[ $link ]] && {
+        msg warn "下载 ${name} > ${link}"
+        if _wget -t 3 -q -c $link -O $tmpfile; then
             mv -f $tmpfile $is_ok
         fi
-    fi
+    }
 }
 
-# get server ip
+# get server ip (multiple sources for reliability)
 get_ip() {
     export "$(_wget -4 -qO- https://one.one.one.one/cdn-cgi/trace 2>/dev/null | grep ip=)" &>/dev/null
     [[ -z $ip ]] && export "$(_wget -4 -qO- https://ifconfig.me 2>/dev/null | sed 's/^/ip=/')" &>/dev/null
     [[ -z $ip ]] && export "$(_wget -4 -qO- https://api.ipify.org 2>/dev/null | sed 's/^/ip=/')" &>/dev/null
+    [[ -z $ip ]] && export "$(_wget -4 -qO- https://ipv4.icanhazip.com 2>/dev/null | sed 's/^/ip=/')" &>/dev/null
     [[ -z $ip ]] && export "$(_wget -6 -qO- https://one.one.one.one/cdn-cgi/trace 2>/dev/null | grep ip=)" &>/dev/null
 }
 
