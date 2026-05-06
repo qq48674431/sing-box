@@ -6,23 +6,11 @@
 
 ## 一键安装
 
-### 推荐 (jsDelivr CDN，全球可用)
-
-```bash
-bash <(curl -fsSL https://cdn.jsdelivr.net/gh/qq48674431/sing-box@main/install.sh)
-```
-
-### 备用 1: GitHub Raw
-
 ```bash
 bash <(curl -fsSL https://raw.githubusercontent.com/qq48674431/sing-box/main/install.sh)
 ```
 
-### 备用 2: wget
 
-```bash
-bash <(wget -qO- https://cdn.jsdelivr.net/gh/qq48674431/sing-box@main/install.sh)
-```
 
 ## 特性
 
