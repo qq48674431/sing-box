@@ -6,6 +6,7 @@ protocol_list=(
     Hysteria2
     VMess-WS
     VMess-TCP
+    VLESS-TCP
     VMess-HTTP
     VMess-QUIC
     Shadowsocks
@@ -355,7 +356,7 @@ create() {
             create caddy $net
         }
         # restart core
-        manage restart &
+        [[ ! $is_batch_install ]] && manage restart &
         ;;
     client)
         is_tls=tls
@@ -389,7 +390,7 @@ create() {
         is_outbounds='outbounds:[{tag:"direct",type:"direct"}]'
         is_server_config_json=$(jq "{$is_log,$is_dns,$is_ntp$is_outbounds}" <<<{})
         cat <<<$is_server_config_json >$is_config_json
-        manage restart &
+        [[ ! $is_batch_install ]] && manage restart &
         ;;
     esac
 }
@@ -822,6 +823,9 @@ add() {
         socks)
             is_new_protocol=Socks
             ;;
+        vtcp | vless-tcp)
+            is_new_protocol=VLESS-TCP
+            ;;
         *)
             for v in ${protocol_list[@]}; do
                 [[ $(grep -E -i "^$is_lower$" <<<$v) ]] && is_new_protocol=$v && break
@@ -850,6 +854,11 @@ add() {
         is_use_uuid=$3
         is_use_path=$4
         is_add_opts="[host] [uuid] [/path]"
+        ;;
+    vless-tcp)
+        is_use_port=$2
+        is_use_uuid=$3
+        is_add_opts="[port] [uuid]"
         ;;
     vmess* | tuic*)
         is_use_port=$2
@@ -1164,6 +1173,7 @@ get() {
             ;;
         vless*)
             is_protocol=vless
+            [[ ($is_lower =~ tcp && ! $is_lower =~ reality) || (! $net_type && $is_up_var_set && ! $is_private_key) ]] && net=vtcp && json_str=$is_users
             ;;
         tuic*)
             net=tuic
@@ -1362,6 +1372,12 @@ info() {
     # is_color=$(shuf -i 41-45 -n1)
     is_color=44
     case $net in
+    vtcp)
+        is_can_change=(0 1 5)
+        is_info_show=(0 1 2 3 4)
+        is_info_str=($is_protocol $is_addr $port $uuid tcp)
+        is_url="vless://$uuid@$is_addr:$port?encryption=none&type=tcp#233boy-vless-tcp-$is_addr"
+        ;;
     ws | tcp | h2 | quic | http*)
         if [[ $host ]]; then
             is_color=45

@@ -207,6 +207,76 @@ get_ip() {
     [[ -z $ip ]] && export "$(_wget -6 -qO- https://one.one.one.one/cdn-cgi/trace 2>/dev/null | grep ip=)" &>/dev/null
 }
 
+# detect all public IPs on this server
+get_all_ips() {
+    all_ips=()
+    [[ $ip ]] && all_ips+=($ip)
+    # check interface IPv4 addresses
+    local iface_ips=$(ip -4 addr show scope global 2>/dev/null | grep -oP 'inet \K[\d.]+')
+    for addr in $iface_ips; do
+        [[ $addr =~ ^(10\.|172\.(1[6-9]|2[0-9]|3[0-1])\.|192\.168\.|100\.(6[4-9]|[7-9][0-9]|1[0-1][0-9]|12[0-7])\.) ]] && continue
+        local dup=0
+        for existing in "${all_ips[@]}"; do [[ $existing == $addr ]] && dup=1 && break; done
+        [[ $dup -eq 0 ]] && all_ips+=($addr)
+    done
+    # check interface IPv6 addresses
+    local iface_ipv6=$(ip -6 addr show scope global 2>/dev/null | grep -oP 'inet6 \K[^/]+')
+    for addr in $iface_ipv6; do
+        [[ $addr =~ ^fe80: ]] && continue
+        local dup=0
+        for existing in "${all_ips[@]}"; do [[ $existing == $addr ]] && dup=1 && break; done
+        [[ $dup -eq 0 ]] && all_ips+=($addr)
+    done
+    [[ ${#all_ips[@]} -eq 0 ]] && all_ips=($ip)
+}
+
+# batch add a protocol, suppress info display, collect URL
+batch_urls=()
+batch_names=()
+batch_add() {
+    unset is_new_protocol port uuid password ss_password ss_method host path
+    unset is_servername is_private_key is_public_key json_str net net_type
+    unset is_url is_config_name is_config_file is_json_file is_new_json
+    unset is_insecure is_anytls_domain is_no_auto_tls is_install_caddy
+    unset is_use_port is_use_uuid is_use_host is_use_path is_use_pass
+    unset is_use_method is_use_socks_user is_use_socks_pass is_use_servername
+    unset is_use_tls is_add_opts is_reality is_socks is_add_public_key
+    unset is_tls door_addr door_port is_socks_user is_socks_pass
+    unset is_info_str is_info_show is_can_change
+    is_dont_show_info=1
+    add "$@"
+    unset is_dont_show_info
+    [[ $is_url ]] && {
+        batch_urls+=("$is_url")
+        batch_names+=("${is_config_name%.json}")
+    }
+}
+
+# show all generated links for all IPs
+show_batch_links() {
+    echo
+    _green "========== 所有配置已生成 =========="
+    echo
+    for current_ip in "${all_ips[@]}"; do
+        [[ $(grep ":" <<<$current_ip) ]] && display_ip="[$current_ip]" || display_ip=$current_ip
+        if [[ ${#all_ips[@]} -gt 1 ]]; then
+            _yellow "======== IP: $current_ip ========"
+        fi
+        for ((i = 0; i < ${#batch_urls[@]}; i++)); do
+            local url="${batch_urls[$i]}"
+            if [[ $current_ip != "${all_ips[0]}" ]]; then
+                local primary="${all_ips[0]}"
+                [[ $(grep ":" <<<$primary) ]] && primary_d="[$primary]" || primary_d=$primary
+                url="${url//$primary_d/$display_ip}"
+                url="${url//$primary/$current_ip}"
+            fi
+            _cyan "${batch_names[$i]}"
+            echo -e "\e[4m${url}\e[0m"
+            echo
+        done
+    done
+}
+
 # check background tasks status
 check_status() {
     # dependent pkg install fail
@@ -452,10 +522,50 @@ main() {
     mkdir -p $is_conf_dir
 
     load core.sh
-    # create a reality config
-    add reality
-    # wait for background tasks (e.g., OpenRC service start)
+
+    # detect all public IPs
+    get_all_ips
+    if [[ ${#all_ips[@]} -gt 1 ]]; then
+        msg ok "检测到 ${#all_ips[@]} 个公网 IP: ${all_ips[*]}"
+    else
+        msg ok "公网 IP: ${all_ips[0]}"
+    fi
+
+    # batch add all protocols
+    is_batch_install=1
+    is_new_install=1
+
+    msg ok "正在生成多协议配置..."
+
+    # 1. VLESS-REALITY
+    batch_add reality
+    is_new_install=
+
+    # 2. Trojan (self-signed TLS)
+    batch_add trojan
+
+    # 3. Hysteria2 (self-signed TLS)
+    batch_add hy2
+
+    # 4. VMess-TCP (no TLS)
+    batch_add tcp
+
+    # 5. VLESS-TCP (no TLS)
+    batch_add vtcp
+
+    # 6. Shadowsocks (chacha20-ietf-poly1305)
+    batch_add ss auto auto chacha20-ietf-poly1305
+
+    # 7. SOCKS5
+    batch_add socks
+
+    # restart service once
+    manage restart &
     wait
+
+    # show all links for all IPs
+    show_batch_links
+
     # remove tmp dir and exit.
     exit_and_del_tmpdir ok
 }
