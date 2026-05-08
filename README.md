@@ -22,6 +22,28 @@
 bash <(curl -fsSL https://raw.githubusercontent.com/qq48674431/sing-box/main/install.sh)
 ```
 
+### 本地安装
+
+先将仓库下载到 VPS，然后从本地目录安装：
+
+```bash
+git clone https://github.com/qq48674431/sing-box.git
+cd sing-box
+bash install.sh -l
+```
+
+如果已有 sing-box 核心文件，跳过下载直接用本地文件：
+
+```bash
+bash install.sh -f /root/sing-box-linux-amd64.tar.gz
+```
+
+两个参数可以组合使用：
+
+```bash
+bash install.sh -l -f /root/sing-box-linux-amd64.tar.gz
+```
+
 ### 指定额外公网 IP
 
 如果 VPS 有多个公网 IP 但脚本只检测到一个（常见于 NAT 云主机），用 `-i` 指定：
